@@ -1,7 +1,7 @@
 from uuid import UUID
 from typing import Union, cast, TYPE_CHECKING, List, Dict
 
-from bleak_winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E501
+from winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E501
     GattServiceProviderResult,
     GattServiceProvider,
     GattLocalService,

@@ -16,10 +16,14 @@ setuptools.setup(
     packages=setuptools.find_packages(exclude=("test", "examples")),
     include_package_data=True,
     install_requires=[
-        "bleak>=1.1.1",  # Updated to require Bleak v1.1.1+
+        "bleak>=0.22.0",  # Updated for generic BleakGATT* base classes
         "pywin32;platform_system=='Windows'",
         "dbus_next;platform_system=='Linux'",
         "pysetupdi @ git+https://github.com/gwangyi/pysetupdi#egg=pysetupdi;platform_system=='Windows'",  # noqa: E501
+        # WinRT packages for Windows (replacing deprecated bleak_winrt)
+        "winrt-windows-foundation>=2.0.0b1;platform_system=='Windows'",
+        "winrt-windows-storage-streams>=2.0.0b1;platform_system=='Windows'",
+        "winrt-windows-devices-bluetooth-genericattributeprofile>=2.0.0b1;platform_system=='Windows'",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

@@ -24,11 +24,11 @@ from bless.backends.winrt.ble import BLEAdapter
 # from BleakBridge import Bridge
 
 # Import of other CLR components needed.
-from bleak_winrt.windows.foundation import Deferral  # type: ignore
+from winrt.windows.foundation import Deferral  # type: ignore
 
-from bleak_winrt.windows.storage.streams import DataReader, DataWriter  # type: ignore
+from winrt.windows.storage.streams import DataReader, DataWriter  # type: ignore
 
-from bleak_winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E501
+from winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E501
     GattWriteOption,
     GattServiceProvider,
     GattLocalCharacteristic,
