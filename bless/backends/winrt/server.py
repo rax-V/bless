@@ -2,7 +2,6 @@ import asyncio
 import logging
 
 from uuid import UUID
-from threading import Event
 from asyncio.events import AbstractEventLoop
 from typing import Optional, List, Any, cast
 
@@ -24,11 +23,11 @@ from bless.backends.winrt.ble import BLEAdapter
 # from BleakBridge import Bridge
 
 # Import of other CLR components needed.
-from bleak_winrt.windows.foundation import Deferral  # type: ignore
+from winrt.windows.foundation import Deferral  # type: ignore
 
-from bleak_winrt.windows.storage.streams import DataReader, DataWriter  # type: ignore
+from winrt.windows.storage.streams import DataReader, DataWriter  # type: ignore
 
-from bleak_winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E501
+from winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E501
     GattWriteOption,
     GattServiceProvider,
     GattLocalCharacteristic,
@@ -92,9 +91,10 @@ class BlessServerWinRT(BaseBlessServer):
         self._subscribed_clients: List[GattSubscribedClient] = []
 
         self._advertising: bool = False
-        self._advertising_started: Event = Event()
+        self._advertising_started: Optional[asyncio.Event] = None
         self._adapter: BLEAdapter = BLEAdapter()
         self._name_overwrite: bool = name_overwrite
+        self._event_loop: Optional[AbstractEventLoop] = None
 
     async def start(self: "BlessServerWinRT", **kwargs):
         """
@@ -107,6 +107,10 @@ class BlessServerWinRT(BaseBlessServer):
             on-board bluetooth module to power on
         """
 
+        # Create a fresh asyncio.Event for this start operation
+        self._advertising_started = asyncio.Event()
+        self._event_loop = asyncio.get_running_loop()
+
         if self._name_overwrite:
             self._adapter.set_local_name(self.name)
 
@@ -118,9 +122,27 @@ class BlessServerWinRT(BaseBlessServer):
 
         for uuid, service in self.services.items():
             winrt_service: BlessGATTServiceWinRT = cast(BlessGATTServiceWinRT, service)
-            winrt_service.service_provider.start_advertising(adv_parameters)
+            winrt_service.service_provider.start_advertising_with_parameters(adv_parameters)
         self._advertising = True
-        self._advertising_started.wait()
+        # Poll for advertising status (WinRT events don't always fire reliably)
+        timeout = 5.0
+        start_time = asyncio.get_event_loop().time()
+        while True:
+            all_advertising = True
+            for uuid, service in self.services.items():
+                winrt_service = cast(BlessGATTServiceWinRT, service)
+                status = winrt_service.service_provider.advertisement_status
+                logger.debug(f"Service {uuid} advertisement_status = {status}")
+                if status != 2:
+                    all_advertising = False
+                    break
+            if all_advertising:
+                break
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed > timeout:
+                logger.warning(f"Advertising timeout after {elapsed:.1f}s")
+                break
+            await asyncio.sleep(0.05)
 
     async def stop(self: "BlessServerWinRT"):
         """
@@ -234,9 +256,42 @@ class BlessServerWinRT(BaseBlessServer):
             char_uuid, properties, permissions, value
         )
         await characteristic.init(service)
-        characteristic.obj.add_read_requested(self.read_characteristic)
-        characteristic.obj.add_write_requested(self.write_characteristic)
-        characteristic.obj.add_subscribed_clients_changed(self.subscribe_characteristic)
+
+        # Capture the current event loop for thread-safe callback dispatch
+        # WinRT callbacks are invoked from a different thread (COM/WinRT thread)
+        # and must be marshaled back to the asyncio event loop using
+        # call_soon_threadsafe()
+        event_loop = asyncio.get_running_loop()
+
+        def on_read_requested(sender, args):
+            """Thread-safe callback wrapper for read requests."""
+            # CRITICAL: Get deferral immediately in WinRT callback thread
+            deferral = args.get_deferral()
+            # Schedule async handler on event loop
+            asyncio.run_coroutine_threadsafe(
+                self._handle_read_request(sender, args, deferral),
+                event_loop
+            )
+
+        def on_write_requested(sender, args):
+            """Thread-safe callback wrapper for write requests."""
+            # CRITICAL: Get deferral immediately in WinRT callback thread
+            deferral = args.get_deferral()
+            # Schedule async handler on event loop
+            asyncio.run_coroutine_threadsafe(
+                self._handle_write_request(sender, args, deferral),
+                event_loop
+            )
+
+        def on_subscribed_clients_changed(sender, args):
+            """Thread-safe callback wrapper for subscription changes."""
+            event_loop.call_soon_threadsafe(
+                self.subscribe_characteristic, sender, args
+            )
+
+        characteristic.obj.add_read_requested(on_read_requested)
+        characteristic.obj.add_write_requested(on_write_requested)
+        characteristic.obj.add_subscribed_clients_changed(on_subscribed_clients_changed)
         service.add_characteristic(characteristic)
 
     def update_value(self, service_uuid: str, char_uuid: str) -> bool:
@@ -277,12 +332,12 @@ class BlessServerWinRT(BaseBlessServer):
 
         return True
 
-    def read_characteristic(
-        self, sender: GattLocalCharacteristic, args: GattReadRequestedEventArgs
+    async def _handle_read_request(
+        self, sender: GattLocalCharacteristic, args: GattReadRequestedEventArgs,
+        deferral: Deferral
     ):
         """
-        The is triggered by pythonnet when windows receives a read request for
-        a given characteristic
+        Async handler for read requests.
 
         Parameters
         ----------
@@ -290,32 +345,31 @@ class BlessServerWinRT(BaseBlessServer):
             The characteristic Gatt object whose value was requested
         args : GattReadRequestedEventArgs
             Arguments for the read request
+        deferral : Deferral
+            The deferral obtained in the WinRT callback thread
         """
-        logger.debug("Reading Characteristic")
-        deferral: Deferral = args.get_deferral()
-        value: bytearray = self.read_request(str(sender.uuid))
-        logger.debug(f"Current Characteristic value {value}")
-        value = value if value is not None else b"\x00"
-        writer: DataWriter = DataWriter()
-        writer.write_bytes(value)
-        logger.debug("Getting request object {}".format(self))
-        request: GattReadRequest
+        try:
+            logger.debug("Reading Characteristic")
+            value: bytearray = self.read_request(str(sender.uuid))
+            logger.debug(f"Current Characteristic value {value}")
+            value = value if value is not None else b"\x00"
+            writer: DataWriter = DataWriter()
+            writer.write_bytes(value)
+            logger.debug("Getting request object")
+            request: GattReadRequest = await args.get_request_async()
+            logger.debug(f"Got request object {request}")
+            request.respond_with_value(writer.detach_buffer())
+        except Exception as e:
+            logger.exception(f"Error handling read request: {e}")
+        finally:
+            deferral.complete()
 
-        async def f():
-            nonlocal args
-            nonlocal request
-            request = await args.get_request_async()
-
-        asyncio.new_event_loop().run_until_complete(f())
-        logger.debug("Got request object {}".format(request))
-        request.respond_with_value(writer.detach_buffer())
-        deferral.complete()
-
-    def write_characteristic(
-        self, sender: GattLocalCharacteristic, args: GattWriteRequestedEventArgs
+    async def _handle_write_request(
+        self, sender: GattLocalCharacteristic, args: GattWriteRequestedEventArgs,
+        deferral: Deferral
     ):
         """
-        Called by pythonnet when a write request is submitted
+        Async handler for write requests.
 
         Parameters
         ----------
@@ -324,33 +378,30 @@ class BlessServerWinRT(BaseBlessServer):
             should write to
         args : GattWriteRequestedEventArgs
             The event arguments for the write request
+        deferral : Deferral
+            The deferral obtained in the WinRT callback thread
         """
+        try:
+            request: GattWriteRequest = await args.get_request_async()
+            logger.debug("Request value: {}".format(request.value))
+            reader: DataReader = DataReader.from_buffer(request.value)
+            n_bytes: int = reader.unconsumed_buffer_length
+            value: bytearray = bytearray()
+            for n in range(0, n_bytes):
+                next_byte: int = reader.read_byte()
+                value.append(next_byte)
 
-        deferral: Deferral = args.get_deferral()
-        request: GattWriteRequest
+            logger.debug("Written Value: {}".format(value))
+            self.write_request(str(sender.uuid), value)
 
-        async def f():
-            nonlocal args
-            nonlocal request
-            request = await args.get_request_async()
+            if request.option == GattWriteOption.WRITE_WITH_RESPONSE:
+                request.respond()
 
-        asyncio.new_event_loop().run_until_complete(f())
-        logger.debug("Request value: {}".format(request.value))
-        reader: DataReader = DataReader.from_buffer(request.value)
-        n_bytes: int = reader.unconsumed_buffer_length
-        value: bytearray = bytearray()
-        for n in range(0, n_bytes):
-            next_byte: int = reader.read_byte()
-            value.append(next_byte)
-
-        logger.debug("Written Value: {}".format(value))
-        self.write_request(str(sender.uuid), value)
-
-        if request.option == GattWriteOption.WRITE_WITH_RESPONSE:
-            request.respond()
-
-        logger.debug("Write Complete")
-        deferral.complete()
+            logger.debug("Write Complete")
+        except Exception as e:
+            logger.exception(f"Error handling write request: {e}")
+        finally:
+            deferral.complete()
 
     def subscribe_characteristic(self, sender: GattLocalCharacteristic, args: Any):
         """

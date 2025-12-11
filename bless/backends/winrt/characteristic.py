@@ -5,7 +5,7 @@ from bleak.backends.characteristic import (  # type: ignore
     BleakGATTCharacteristic,
 )
 
-from bleak_winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E501
+from winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E501
     GattProtectionLevel,
     GattLocalCharacteristicParameters,
     GattLocalCharacteristic,

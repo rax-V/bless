@@ -22,11 +22,11 @@ from bless.backends.characteristic import (  # type: ignore # noqa: E402
     GATTAttributePermissions,
 )
 
-from bleak_winrt.windows.foundation import Deferral  # type: ignore # noqa: E402 E501
+from winrt.windows.foundation import Deferral  # type: ignore # noqa: E402 E501
 
-from bleak_winrt.windows.storage.streams import DataReader, DataWriter  # type: ignore # noqa: E402 E501
+from winrt.windows.storage.streams import DataReader, DataWriter  # type: ignore # noqa: E402 E501
 
-from bleak_winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E402 F401 E501
+from winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E402 F401 E501
     GattWriteOption,
     GattServiceProviderResult,
     GattServiceProvider,
