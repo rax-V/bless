@@ -237,16 +237,34 @@ class BlessServerWinRT(BaseBlessServer):
             char_uuid, properties, permissions, value
         )
         await characteristic.init(service)
-        # Wrap callbacks - WinRT expects (sender, args), not bound methods with self
-        characteristic.obj.add_read_requested(
-            lambda sender, args: self.read_characteristic(sender, args)
-        )
-        characteristic.obj.add_write_requested(
-            lambda sender, args: self.write_characteristic(sender, args)
-        )
-        characteristic.obj.add_subscribed_clients_changed(
-            lambda sender, args: self.subscribe_characteristic(sender, args)
-        )
+
+        # Capture the current event loop for thread-safe callback dispatch
+        # WinRT callbacks are invoked from a different thread (COM/WinRT thread)
+        # and must be marshaled back to the asyncio event loop using
+        # call_soon_threadsafe()
+        event_loop = asyncio.get_running_loop()
+
+        def on_read_requested(sender, args):
+            """Thread-safe callback wrapper for read requests."""
+            event_loop.call_soon_threadsafe(
+                self.read_characteristic, sender, args
+            )
+
+        def on_write_requested(sender, args):
+            """Thread-safe callback wrapper for write requests."""
+            event_loop.call_soon_threadsafe(
+                self.write_characteristic, sender, args
+            )
+
+        def on_subscribed_clients_changed(sender, args):
+            """Thread-safe callback wrapper for subscription changes."""
+            event_loop.call_soon_threadsafe(
+                self.subscribe_characteristic, sender, args
+            )
+
+        characteristic.obj.add_read_requested(on_read_requested)
+        characteristic.obj.add_write_requested(on_write_requested)
+        characteristic.obj.add_subscribed_clients_changed(on_subscribed_clients_changed)
         service.add_characteristic(characteristic)
 
     def update_value(self, service_uuid: str, char_uuid: str) -> bool:

@@ -1,5 +1,7 @@
+import asyncio
 from uuid import UUID
-from typing import Union, cast, TYPE_CHECKING, List, Dict
+from typing import Union, cast, TYPE_CHECKING, List, Dict, Optional
+from asyncio.events import AbstractEventLoop
 
 from winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E501
     GattServiceProviderResult,
@@ -37,6 +39,7 @@ class BlessGATTServiceWinRT(BaseBlessGATTService, BleakGATTService):
         self._characteristics: Dict[int, BleakGATTCharacteristic] = (
             {}
         )  # For Bleak compatibility
+        self._event_loop: Optional[AbstractEventLoop] = None
 
     async def init(self, server: "BaseBlessServer"):
         """
@@ -54,11 +57,20 @@ class BlessGATTServiceWinRT(BaseBlessGATTService, BleakGATTService):
         self.service_provider: GattServiceProvider = (
             service_provider_result.service_provider
         )
-        # Wrap the callback to handle the bound method signature
-        # WinRT expects (sender, args) but bound methods have (self, sender, args)
-        self.service_provider.add_advertisement_status_changed(
-            lambda sender, args: winrt_server._status_update(sender, args)
-        )
+        # Capture the current event loop for thread-safe callback dispatch
+        # WinRT callbacks are invoked from a different thread (COM/WinRT thread)
+        # and must be marshaled back to the asyncio event loop using
+        # call_soon_threadsafe()
+        self._event_loop = asyncio.get_running_loop()
+
+        def on_status_changed(sender, args):
+            """Thread-safe callback wrapper for advertisement status changes."""
+            if self._event_loop is not None:
+                self._event_loop.call_soon_threadsafe(
+                    winrt_server._status_update, sender, args
+                )
+
+        self.service_provider.add_advertisement_status_changed(on_status_changed)
         new_service: GattLocalService = self.service_provider.service
         self._local_service = new_service
         self.obj = new_service
