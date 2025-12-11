@@ -234,9 +234,16 @@ class BlessServerWinRT(BaseBlessServer):
             char_uuid, properties, permissions, value
         )
         await characteristic.init(service)
-        characteristic.obj.add_read_requested(self.read_characteristic)
-        characteristic.obj.add_write_requested(self.write_characteristic)
-        characteristic.obj.add_subscribed_clients_changed(self.subscribe_characteristic)
+        # Wrap callbacks - WinRT expects (sender, args), not bound methods with self
+        characteristic.obj.add_read_requested(
+            lambda sender, args: self.read_characteristic(sender, args)
+        )
+        characteristic.obj.add_write_requested(
+            lambda sender, args: self.write_characteristic(sender, args)
+        )
+        characteristic.obj.add_subscribed_clients_changed(
+            lambda sender, args: self.subscribe_characteristic(sender, args)
+        )
         service.add_characteristic(characteristic)
 
     def update_value(self, service_uuid: str, char_uuid: str) -> bool:

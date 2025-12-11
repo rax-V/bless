@@ -54,8 +54,10 @@ class BlessGATTServiceWinRT(BaseBlessGATTService, BleakGATTService):
         self.service_provider: GattServiceProvider = (
             service_provider_result.service_provider
         )
+        # Wrap the callback to handle the bound method signature
+        # WinRT expects (sender, args) but bound methods have (self, sender, args)
         self.service_provider.add_advertisement_status_changed(
-            winrt_server._status_update
+            lambda sender, args: winrt_server._status_update(sender, args)
         )
         new_service: GattLocalService = self.service_provider.service
         self._local_service = new_service
