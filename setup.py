@@ -19,7 +19,7 @@ setuptools.setup(
         "bleak>=0.22.0",  # Updated for generic BleakGATT* base classes
         "pywin32;platform_system=='Windows'",
         "dbus_next;platform_system=='Linux'",
-        "pysetupdi @ git+https://github.com/gwangyi/pysetupdi#egg=pysetupdi;platform_system=='Windows'",  # noqa: E501
+        "pysetupdi @ git+https://github.com/gwangyi/pysetupdi ; platform_system=='Windows'",
         # WinRT packages for Windows (replacing deprecated bleak_winrt)
         "winrt-windows-foundation>=2.0.0b1;platform_system=='Windows'",
         "winrt-windows-storage-streams>=2.0.0b1;platform_system=='Windows'",
