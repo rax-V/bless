@@ -118,7 +118,10 @@ class BlessServerWinRT(BaseBlessServer):
 
         for uuid, service in self.services.items():
             winrt_service: BlessGATTServiceWinRT = cast(BlessGATTServiceWinRT, service)
-            winrt_service.service_provider.start_advertising(adv_parameters)
+            # Note: The new winrt-* packages don't expose the parameterized overload
+            # of start_advertising(). The default behavior (discoverable + connectable)
+            # works for our use case.
+            winrt_service.service_provider.start_advertising()
         self._advertising = True
         self._advertising_started.wait()
 
