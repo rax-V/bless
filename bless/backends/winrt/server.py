@@ -275,14 +275,18 @@ class BlessServerWinRT(BaseBlessServer):
 
         def on_read_requested(sender, args):
             """Thread-safe callback wrapper for read requests."""
+            # CRITICAL: Get deferral immediately in WinRT callback thread
+            deferral = args.get_deferral()
             event_loop.call_soon_threadsafe(
-                self.read_characteristic, sender, args
+                self.read_characteristic, sender, args, deferral
             )
 
         def on_write_requested(sender, args):
             """Thread-safe callback wrapper for write requests."""
+            # CRITICAL: Get deferral immediately in WinRT callback thread
+            deferral = args.get_deferral()
             event_loop.call_soon_threadsafe(
-                self.write_characteristic, sender, args
+                self.write_characteristic, sender, args, deferral
             )
 
         def on_subscribed_clients_changed(sender, args):
@@ -335,7 +339,8 @@ class BlessServerWinRT(BaseBlessServer):
         return True
 
     def read_characteristic(
-        self, sender: GattLocalCharacteristic, args: GattReadRequestedEventArgs
+        self, sender: GattLocalCharacteristic, args: GattReadRequestedEventArgs,
+        deferral: Deferral
     ):
         """
         The is triggered by pythonnet when windows receives a read request for
@@ -349,7 +354,6 @@ class BlessServerWinRT(BaseBlessServer):
             Arguments for the read request
         """
         logger.debug("Reading Characteristic")
-        deferral: Deferral = args.get_deferral()
         value: bytearray = self.read_request(str(sender.uuid))
         logger.debug(f"Current Characteristic value {value}")
         value = value if value is not None else b"\x00"
@@ -369,7 +373,8 @@ class BlessServerWinRT(BaseBlessServer):
         deferral.complete()
 
     def write_characteristic(
-        self, sender: GattLocalCharacteristic, args: GattWriteRequestedEventArgs
+        self, sender: GattLocalCharacteristic, args: GattWriteRequestedEventArgs,
+        deferral: Deferral
     ):
         """
         Called by pythonnet when a write request is submitted
@@ -383,7 +388,6 @@ class BlessServerWinRT(BaseBlessServer):
             The event arguments for the write request
         """
 
-        deferral: Deferral = args.get_deferral()
         request: GattWriteRequest
 
         async def f():
