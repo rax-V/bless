@@ -1,7 +1,9 @@
+import logging
 import asyncio
 from uuid import UUID
 from typing import Union, cast, TYPE_CHECKING, List, Dict, Optional
 from asyncio.events import AbstractEventLoop
+logger = logging.getLogger(__name__)
 
 from winrt.windows.devices.bluetooth.genericattributeprofile import (  # type: ignore # noqa: E501
     GattServiceProviderResult,
@@ -64,6 +66,7 @@ class BlessGATTServiceWinRT(BaseBlessGATTService, BleakGATTService):
         self._event_loop = asyncio.get_running_loop()
 
         def on_status_changed(sender, args):
+            logger.info(f"on_status_changed FIRED! args.status={args.status}")
             """Thread-safe callback wrapper for advertisement status changes."""
             if self._event_loop is not None:
                 self._event_loop.call_soon_threadsafe(

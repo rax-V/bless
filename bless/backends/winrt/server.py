@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from uuid import UUID
-from threading import Event
+# Using asyncio.Event for non-blocking waits
 from asyncio.events import AbstractEventLoop
 from typing import Optional, List, Any, cast
 
@@ -92,9 +92,10 @@ class BlessServerWinRT(BaseBlessServer):
         self._subscribed_clients: List[GattSubscribedClient] = []
 
         self._advertising: bool = False
-        self._advertising_started: Event = Event()
+        self._advertising_started: Optional[asyncio.Event] = None
         self._adapter: BLEAdapter = BLEAdapter()
         self._name_overwrite: bool = name_overwrite
+        self._event_loop: Optional[AbstractEventLoop] = None
 
     async def start(self: "BlessServerWinRT", **kwargs):
         """
@@ -106,6 +107,10 @@ class BlessServerWinRT(BaseBlessServer):
             Floating point decimal in seconds for how long to wait for the
             on-board bluetooth module to power on
         """
+
+        # Create a fresh asyncio.Event for this start operation
+        self._advertising_started = asyncio.Event()
+        self._event_loop = asyncio.get_running_loop()
 
         if self._name_overwrite:
             self._adapter.set_local_name(self.name)
@@ -121,9 +126,31 @@ class BlessServerWinRT(BaseBlessServer):
             # Note: The new winrt-* packages don't expose the parameterized overload
             # of start_advertising(). The default behavior (discoverable + connectable)
             # works for our use case.
-            winrt_service.service_provider.start_advertising()
+            logger.info(f"Calling start_advertising_with_parameters() for service {uuid}")
+            winrt_service.service_provider.start_advertising_with_parameters(adv_parameters)
+            logger.info(f"start_advertising_with_parameters() returned for service {uuid}")
         self._advertising = True
-        self._advertising_started.wait()
+        # Poll for advertising status (WinRT events don't always fire reliably)
+        logger.info("Polling for advertising status...")
+        timeout = 5.0
+        start_time = asyncio.get_event_loop().time()
+        while True:
+            all_advertising = True
+            for uuid, service in self.services.items():
+                winrt_service = cast(BlessGATTServiceWinRT, service)
+                status = winrt_service.service_provider.advertisement_status
+                logger.debug(f"Service {uuid} advertisement_status = {status}")
+                if status != 2:
+                    all_advertising = False
+                    break
+            if all_advertising:
+                logger.info("All services advertising!")
+                break
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed > timeout:
+                logger.warning(f"Advertising timeout after {elapsed:.1f}s")
+                break
+            await asyncio.sleep(0.05)
 
     async def stop(self: "BlessServerWinRT"):
         """
@@ -184,7 +211,9 @@ class BlessServerWinRT(BaseBlessServer):
             See
             [here](https://docs.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.genericattributeprofile.gattserviceprovideradvertisementstatuschangedeventargs.status?view=winrt-19041)
         """
+        logger.info(f"_status_update called! args.status={args.status}")
         if args.status == 2:
+            logger.info("Status is 2 - setting event!")
             self._advertising_started.set()
 
     async def add_new_service(self, uuid: str):
